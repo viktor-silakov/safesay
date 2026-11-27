@@ -12,15 +12,19 @@ func report(_ message: String) {
 
 func printUsage() {
     print("""
-        Usage: safesay [say arguments]
+        Usage: safesay [--ttl DURATION] [say arguments]
                safesay -f -
                safesay --mode foreground|background
+               safesay --queue | --cancel <id> | --clear-queue
+               safesay --pause | --resume | --status
                safesay --allow-app <bundle-id-or-executable-path>
                safesay --allow-current
+               safesay --remove-allowed <bundle-id-or-executable-path>
                safesay --list-allowed
                safesay --clear-allowed
                safesay --mic-status
 
+        Speech expires after 2h of waiting by default. Use durations such as 30s, 5m, or 2h.
         Use -f - to read text from the terminal. See `man say` for speech arguments.
         """)
 }
@@ -53,7 +57,7 @@ func chooseMode() throws -> Mode? {
 
 func run(_ arguments: [String], storage: Storage) throws -> Int32 {
     let agent = LaunchAgent(storage: storage)
-    let speaker = Speaker(allowList: { try storage.configuration().allowedApps })
+    let speaker = Speaker(configuration: storage.configuration)
 
     switch arguments.first {
     case "--help" where arguments.count == 1:
@@ -67,12 +71,56 @@ func run(_ arguments: [String], storage: Storage) throws -> Int32 {
         if mode == .background { try agent.register() }
         print("Mode: \(mode.rawValue)")
         return 0
+    case "--queue":
+        guard arguments.count == 1 else { throw SafesayError("Usage: safesay --queue") }
+        let now = Date()
+        let entries = try storage.queueEntries(at: now)
+        if entries.isEmpty {
+            print("No queued jobs.")
+        } else {
+            print("ID\tAGE\tTEXT")
+            for entry in entries {
+                let age = Int(max(0, now.timeIntervalSince(entry.queuedAt)))
+                print("\(entry.id)\t\(age)s\t\(entry.job.preview)")
+            }
+        }
+        return 0
+    case "--cancel":
+        guard arguments.count == 2, let id = UInt64(arguments[1]), id > 0 else {
+            throw SafesayError("Usage: safesay --cancel <id>")
+        }
+        guard try storage.cancelJobs(id: id) > 0 else { throw SafesayError("No queued job with ID \(id).") }
+        print("Canceled job \(id).")
+        return 0
+    case "--clear-queue":
+        guard arguments.count == 1 else { throw SafesayError("Usage: safesay --clear-queue") }
+        print("Canceled jobs: \(try storage.cancelJobs())")
+        return 0
+    case "--pause", "--resume":
+        guard arguments.count == 1 else { throw SafesayError("Usage: safesay --pause | --resume") }
+        let paused = arguments[0] == "--pause"
+        try storage.configure { $0.paused = paused }
+        print(paused ? "Speech paused." : "Speech resumed.")
+        return 0
+    case "--status":
+        guard arguments.count == 1 else { throw SafesayError("Usage: safesay --status") }
+        try printStatus(storage: storage, agent: agent)
+        return 0
     case "--allow-app":
         guard arguments.count == 2, !arguments[1].isEmpty else {
             throw SafesayError("Usage: safesay --allow-app <bundle-id-or-executable-path>")
         }
         try storage.configure { $0.allowedApps.insert(arguments[1]) }
         print(arguments[1])
+        return 0
+    case "--remove-allowed":
+        guard arguments.count == 2, !arguments[1].isEmpty else {
+            throw SafesayError("Usage: safesay --remove-allowed <bundle-id-or-executable-path>")
+        }
+        let id = arguments[1]
+        var removed = false
+        try storage.configure { removed = $0.allowedApps.remove(id) != nil }
+        print(removed ? "Removed exception for \(id)." : "No exception for \(id).")
         return 0
     case "--list-allowed":
         guard arguments.count == 1 else { throw SafesayError("Usage: safesay --list-allowed") }
@@ -106,12 +154,17 @@ func run(_ arguments: [String], storage: Storage) throws -> Int32 {
         forwardTerminationSignals()
         try agent.processQueue(speaker: speaker)
         return 0
+    case "--reload-agent":
+        guard arguments.count == 1 else { throw SafesayError("Invalid agent reload invocation.") }
+        try agent.reloadIfRegistered()
+        return 0
     default:
         break
     }
 
-    let speech = SpeechArguments(arguments)
-    if speech.silent { try execSay(arguments) }
+    let options = try speechOptions(arguments)
+    let speech = SpeechArguments(options.arguments)
+    if speech.silent { try execSay(speech.arguments) }
 
     var mode = try storage.configuration().mode
     if mode == nil {
@@ -134,7 +187,7 @@ func run(_ arguments: [String], storage: Storage) throws -> Int32 {
     forwardTerminationSignals()
     if speech.readsStdin && terminalInput {
         while let line = readLine(strippingNewline: false) {
-            let job = try speech.job(stdin: Data(line.utf8))
+            let job = try speech.job(stdin: Data(line.utf8), ttl: options.ttl)
             let status = try speakInCommand(job, storage: storage, speaker: speaker)
             if status != 0 { return status }
         }
@@ -142,7 +195,7 @@ func run(_ arguments: [String], storage: Storage) throws -> Int32 {
     }
 
     let input = speech.readsStdin ? FileHandle.standardInput.readDataToEndOfFile() : nil
-    let job = try speech.job(stdin: input)
+    let job = try speech.job(stdin: input, ttl: options.ttl)
     if mode == .background && !speech.attached,
        try storage.withConfigurationLock({
            guard try storage.configuration().mode == .background else { return false }
@@ -155,9 +208,51 @@ func run(_ arguments: [String], storage: Storage) throws -> Int32 {
     return try speakInCommand(job, storage: storage, speaker: speaker)
 }
 
+func speechOptions(_ arguments: [String]) throws -> (arguments: [String], ttl: TimeInterval?) {
+    guard let first = arguments.first, first == "--ttl" || first.hasPrefix("--ttl=") else {
+        return (arguments, nil)
+    }
+    let usage = "Usage: safesay --ttl <duration> [say arguments]. Example durations: 30s, 5m, 2h."
+    let inline = first.hasPrefix("--ttl=")
+    guard inline || arguments.count > 1 else { throw SafesayError(usage) }
+    var duration = inline ? String(first.dropFirst("--ttl=".count)) : arguments[1]
+    let units: [Character: TimeInterval] = ["s": 1, "m": 60, "h": 3600]
+    let multiplier = duration.last.flatMap { units[$0] }
+    if multiplier != nil { duration.removeLast() }
+    guard let value = TimeInterval(duration) else { throw SafesayError(usage) }
+    let seconds = value * (multiplier ?? 1)
+    guard seconds > 0, seconds.isFinite else { throw SafesayError(usage) }
+    return (Array(arguments.dropFirst(inline ? 1 : 2)), seconds)
+}
+
+func printStatus(storage: Storage, agent: LaunchAgent) throws {
+    let config = try storage.configuration()
+    let agentStatus = try agent.status()
+    let jobs = try storage.queueEntries().count
+    let blockers = (try? Microphone.users())?.filter { user in
+        user.identifier.map(config.allowedApps.contains) != true
+    }.map { $0.identifier ?? "Unknown process (PID \($0.pid))" }
+
+    print("Mode: \(config.mode?.rawValue ?? "foreground (default)")")
+    print("Speech: \(config.paused ? "paused" : "enabled")")
+    print("LaunchAgent: \(agentStatus)")
+    print("Queued jobs: \(jobs)")
+    if let blockers {
+        print("Microphone blockers: \(blockers.isEmpty ? "none" : blockers.joined(separator: ", "))")
+    } else {
+        print("Microphone blockers: unavailable")
+    }
+}
+
 func speakInCommand(_ job: SpeechJob, storage: Storage, speaker: Speaker) throws -> Int32 {
+    let deadline = Date().addingTimeInterval(job.lifetime)
     try privateDirectory(storage.stateDirectory)
-    return try withLock(storage.speechLock) { try speaker.speak(job) }
+    do {
+        let status = try withLock(storage.speechLock, until: deadline) { try speaker.speak(job, until: deadline) }
+        if let status { return status }
+    } catch LockError.timedOut {}
+    report("Speech expired before playback.")
+    return 0
 }
 
 func execSay(_ arguments: [String]) throws -> Never {

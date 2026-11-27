@@ -10,6 +10,7 @@ swift build -c release --package-path "$project"
 build_directory=$(swift build -c release --package-path "$project" --show-bin-path)
 mkdir -p "$bin_directory"
 /usr/bin/install -m 755 "$build_directory/safesay" "$bin_directory/safesay"
+"$bin_directory/safesay" --reload-agent
 
 if ! /usr/bin/grep -Fqx -- "$path_marker" "$zshenv" 2>/dev/null; then
     mkdir -p "${zshenv:h}"

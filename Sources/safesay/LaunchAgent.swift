@@ -18,6 +18,20 @@ struct LaunchAgent {
         storage.home.appendingPathComponent("Library/LaunchAgents/\(label).plist")
     }
 
+    func status() throws -> String {
+        let result = try launchctl(["print", target])
+        if result.status != 0 { return "not loaded" }
+        return result.output.contains("state = running") ? "running" : "loaded, not running"
+    }
+
+    func reloadIfRegistered() throws {
+        guard try launchctl(["print", target]).status == 0 else { return }
+        try storage.withConfigurationLock {
+            if try launchctl(["print", target]).status == 0 { try unload() }
+            try register()
+        }
+    }
+
     func register() throws {
         if try launchctl(["print", target]).status == 0 { return }
 
@@ -65,9 +79,13 @@ struct LaunchAgent {
         } catch let error as CocoaError where error.code == .fileNoSuchFile {
             // A prior shutdown may already have removed the file.
         }
+        try unload()
+        return true
+    }
+
+    private func unload() throws {
         let result = try launchctl(["bootout", target])
         guard result.status == 0 else { throw SafesayError("Could not stop the LaunchAgent: \(result.output)") }
-        return true
     }
 
     private func watch(_ directory: URL, wakeups: DispatchSemaphore) throws -> DispatchSourceFileSystemObject {
@@ -81,20 +99,24 @@ struct LaunchAgent {
     }
 
     private func processNext(speaker: Speaker) throws {
-        guard let path = try storage.pendingJobs().first else { return }
-        let data = try Data(contentsOf: path)
-        let job: SpeechJob
-        do {
-            job = try JSONDecoder().decode(SpeechJob.self, from: data)
-        } catch {
-            let failed = storage.stateDirectory.appendingPathComponent("\(UUID()).invalid-job")
-            try FileManager.default.moveItem(at: path, to: failed)
-            report("Invalid queue entry \(path.lastPathComponent) moved to \(failed.lastPathComponent).")
-            return
+        let entry = try storage.withQueueLock { () throws -> QueueEntry? in
+            guard let path = try storage.pendingJobs().first else { return nil }
+            do {
+                return try storage.readJob(path)
+            } catch is DecodingError {
+                let failed = storage.stateDirectory.appendingPathComponent("\(UUID()).invalid-job")
+                try FileManager.default.moveItem(at: path, to: failed)
+                report("Invalid queue entry \(path.lastPathComponent) moved to \(failed.lastPathComponent).")
+                return nil
+            }
         }
-        let status = try speaker.speak(job)
-        if status != 0 { report("say exited with status \(status) for \(path.lastPathComponent).") }
-        try FileManager.default.removeItem(at: path)
+        guard let entry else { return }
+        let path = storage.jobPath(entry.id)
+        let status = try speaker.speak(entry.job, until: entry.expiresAt) {
+            !FileManager.default.fileExists(atPath: path.path)
+        }
+        if let status, status != 0 { report("say exited with status \(status) for job \(entry.id).") }
+        _ = try storage.cancelJobs(id: entry.id)
     }
 
     private func launchctl(_ arguments: [String]) throws -> (status: Int32, output: String) {

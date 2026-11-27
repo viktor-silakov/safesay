@@ -16,10 +16,10 @@ struct SpeechArguments {
     let arguments: [String]
     private(set) var silent = false
     private(set) var attached = false
-    private var hasText = false
+    private(set) var text: [String] = []
     private var input: (path: String, index: Int, prefix: String)?
 
-    var readsStdin: Bool { input.map { $0.path == "-" } ?? !hasText }
+    var readsStdin: Bool { input.map { $0.path == "-" } ?? text.isEmpty }
 
     init(_ arguments: [String]) {
         self.arguments = arguments
@@ -28,11 +28,11 @@ struct SpeechArguments {
             let argument = arguments[index]
             index += 1
             if argument == "--" {
-                hasText = hasText || index < arguments.count
+                text.append(contentsOf: arguments[index...])
                 break
             }
             if argument == "-" || !argument.hasPrefix("-") {
-                hasText = true
+                text.append(argument)
                 continue
             }
 
@@ -83,20 +83,31 @@ struct SpeechArguments {
         }
     }
 
-    func job(stdin: Data? = nil) throws -> SpeechJob {
+    func job(stdin: Data? = nil, ttl: TimeInterval? = nil) throws -> SpeechJob {
         var forwarded = arguments
         if let input, input.path != "-" {
             let data = try Data(contentsOf: URL(fileURLWithPath: input.path))
             forwarded[input.index] = input.prefix + "-"
-            return SpeechJob(arguments: forwarded, input: data)
+            return SpeechJob(arguments: forwarded, input: data, ttl: ttl)
         }
-        return SpeechJob(arguments: forwarded, input: readsStdin ? stdin : nil)
+        return SpeechJob(arguments: forwarded, input: readsStdin ? stdin : nil, ttl: ttl)
     }
 }
 
 struct SpeechJob: Codable {
+    static let defaultTTL: TimeInterval = 2 * 60 * 60
+
     let arguments: [String]
     let input: Data?
+    var ttl: TimeInterval? = nil
+
+    var lifetime: TimeInterval { ttl ?? Self.defaultTTL }
+
+    var preview: String {
+        let text = input.map { String(decoding: $0.prefix(480), as: UTF8.self) }
+            ?? SpeechArguments(arguments).text.joined(separator: " ")
+        return String(text.prefix(120)).components(separatedBy: .controlCharacters).joined(separator: " ")
+    }
 }
 
 private var speechPID: pid_t = 0
@@ -115,20 +126,21 @@ struct Speaker {
     var executable = "/usr/bin/say"
     var microphoneUsers = Microphone.users
     var pollInterval: TimeInterval = 0.05
-    let allowList: () throws -> Set<String>
+    let configuration: () throws -> Configuration
 
-    func speak(_ job: SpeechJob) throws -> Int32 {
+    func speak(_ job: SpeechJob, until deadline: Date, cancelled: () -> Bool = { false }) throws -> Int32? {
+        guard deadline > Date(), !cancelled() else { return nil }
         let input = try job.input.map(anonymousInput)
         defer { try? input?.close() }
 
-        while true {
-            let allowed = try allowList()
-            guard canSpeak(allowed: allowed) else {
-                Thread.sleep(forTimeInterval: 0.2)
+        while deadline > Date() && !cancelled() {
+            guard canSpeak() else {
+                Thread.sleep(forTimeInterval: min(0.2, max(0, deadline.timeIntervalSinceNow)))
                 continue
             }
 
             try input?.seek(toOffset: 0)
+            guard deadline > Date(), !cancelled() else { return nil }
             let say = Process()
             say.executableURL = URL(fileURLWithPath: executable)
             say.arguments = job.arguments
@@ -138,7 +150,7 @@ struct Speaker {
 
             var interrupted = false
             while say.isRunning {
-                if !canSpeak(allowed: allowed) {
+                if cancelled() || !canSpeak() {
                     interrupted = say.isRunning
                     if interrupted { kill(say.processIdentifier, SIGKILL) }
                     break
@@ -151,12 +163,14 @@ struct Speaker {
                 return say.terminationReason == .exit ? say.terminationStatus : 128 + say.terminationStatus
             }
         }
+        return nil
     }
 
-    private func canSpeak(allowed: Set<String>) -> Bool {
-        guard let users = try? microphoneUsers() else { return false }
+    private func canSpeak() -> Bool {
+        guard let config = try? configuration(), !config.paused,
+              let users = try? microphoneUsers() else { return false }
         return users.allSatisfy { user in
-            user.identifier.map(allowed.contains) ?? false
+            user.identifier.map(config.allowedApps.contains) ?? false
         }
     }
 
