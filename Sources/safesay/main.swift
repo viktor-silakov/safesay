@@ -1,6 +1,22 @@
 import Darwin
 import Foundation
 
+private enum CLI {
+    static let version = "0.1.0"
+    static let shortOptions = [
+        "-h": "--help",
+        "-p": "--pause",
+        "-R": "--resume",
+        "-s": "--status",
+        "-q": "--queue",
+        "-c": "--cancel",
+        "-t": "--ttl",
+        "-m": "--mode",
+        "-l": "--list-allowed",
+        "-M": "--mic-status",
+    ]
+}
+
 struct SafesayError: LocalizedError {
     let errorDescription: String?
     init(_ message: String) { errorDescription = message }
@@ -14,6 +30,7 @@ func printUsage() {
     print("""
         Usage: safesay [--ttl DURATION] [say arguments]
                safesay -f -
+               safesay --help | --version
                safesay --mode foreground|background
                safesay --queue | --cancel <id> | --clear-queue
                safesay --pause | --resume | --status
@@ -24,6 +41,11 @@ func printUsage() {
                safesay --clear-allowed
                safesay --mic-status
 
+        Short options:
+        \(CLI.shortOptions.sorted { $0.key < $1.key }.map { "  \($0.key)  \($0.value)" }.joined(separator: "\n"))
+          -v  --version when used alone
+
+        Use -v VOICE to select a macOS voice, or -v '?' to list voices.
         Speech expires after 2h of waiting by default. Use durations such as 30s, 5m, or 2h.
         Use -f - to read text from the terminal. See `man say` for speech arguments.
         """)
@@ -55,13 +77,25 @@ func chooseMode() throws -> Mode? {
     }
 }
 
-func run(_ arguments: [String], storage: Storage) throws -> Int32 {
+func expandedArguments(_ arguments: [String]) -> [String] {
+    if arguments == ["-v"] { return ["--version"] }
+    guard let first = arguments.first, let option = CLI.shortOptions[first] else { return arguments }
+    return [option] + arguments.dropFirst()
+}
+
+func run(_ rawArguments: [String], storage: Storage) throws -> Int32 {
+    let arguments = expandedArguments(rawArguments)
     let agent = LaunchAgent(storage: storage)
     let speaker = Speaker(configuration: storage.configuration)
 
     switch arguments.first {
-    case "--help" where arguments.count == 1:
+    case "--help":
+        guard arguments.count == 1 else { throw SafesayError("Usage: safesay --help") }
         printUsage()
+        return 0
+    case "--version":
+        guard arguments.count == 1 else { throw SafesayError("Usage: safesay --version") }
+        print("safesay \(CLI.version)")
         return 0
     case "--mode":
         guard arguments.count == 2, let mode = Mode(rawValue: arguments[1]) else {

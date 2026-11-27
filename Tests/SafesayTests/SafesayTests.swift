@@ -65,6 +65,18 @@ final class SafesayTests: XCTestCase {
         XCTAssertThrowsError(try speechOptions(["--ttl"]))
     }
 
+    func testShortOptionsPreserveNativeSayArguments() {
+        XCTAssertEqual(expandedArguments(["-p"]), ["--pause"])
+        XCTAssertEqual(expandedArguments(["-R"]), ["--resume"])
+        XCTAssertEqual(expandedArguments(["-t", "5m", "hello"]), ["--ttl", "5m", "hello"])
+        XCTAssertEqual(expandedArguments(["-v"]), ["--version"])
+        XCTAssertEqual(expandedArguments(["-v", "Alex", "hello"]), ["-v", "Alex", "hello"])
+        XCTAssertEqual(expandedArguments(["-v", "?"]), ["-v", "?"])
+        XCTAssertEqual(expandedArguments(["-v?"]), ["-v?"])
+        XCTAssertEqual(expandedArguments(["-r", "150", "hello"]), ["-r", "150", "hello"])
+        XCTAssertEqual(expandedArguments(["--", "-p"]), ["--", "-p"])
+    }
+
     func testPausedPhraseExpiresBeforeItCanStart() throws {
         let speaker = Speaker(executable: "/does-not-exist", microphoneUsers: { [] }, configuration: {
             var config = Configuration()

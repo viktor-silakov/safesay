@@ -50,6 +50,16 @@ safesay --ttl 5m 'Task complete'
 
 Pausing speech interrupts the current phrase. It starts again from the beginning after you resume, provided it has time left to wait. Lifetimes continue to count down while speech is paused.
 
+## Short options
+
+- `-p` pauses speech, `-R` resumes it, and `-s` shows status.
+- `-q` lists the queue and `-c <id>` cancels a job.
+- `-m <mode>` selects a mode and `-t <duration>` sets a phrase's lifetime.
+- `-l` lists saved microphone exceptions and `-M` shows active microphone users.
+- `-h` shows help and `-v` on its own shows the `safesay` version.
+
+`-v Alex` selects a voice, `-v '?'` lists voices, and `-r <rate>` sets the speech rate, as in macOS `say`.
+
 ## Microphone exceptions
 
 ```sh
