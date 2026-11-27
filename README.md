@@ -1,28 +1,28 @@
 # safesay
 
-`safesay` озвучивает текст через macOS `say` и ждёт, пока микрофон освободится. Подходит для голосовых уведомлений во время звонков, диктовки и записи.
+`safesay` uses macOS `say` to speak text. It can hold voice notifications while the microphone is in use during calls, dictation, or recordings.
 
-## Установка
+## Installation
 
-Для сборки нужна macOS 15 или новее и инструменты Xcode с macOS SDK 15 или новее.
+Building requires macOS 15 or later and Xcode tools with macOS SDK 15 or later.
 
 ```sh
 git clone https://github.com/viktor-silakov/safesay.git
 cd safesay
 ./install.sh
-safesay 'Готово'
+safesay 'Done'
 ```
 
-Установщик собирает `safesay`, копирует его в `~/.local/bin` и добавляет эту папку в PATH через `.zshenv`. В новых сессиях zsh команда доступна из любой папки. Для обновления запустите установщик повторно.
+The installer builds `safesay`, copies it to `~/.local/bin`, and adds that directory to `PATH` through `.zshenv`. In new zsh sessions, the command works from any directory. Run the installer again to update it.
 
-## Режимы
+## Modes
 
-При первом запуске `safesay` в терминале можно выбрать режим. Enter выбирает первый. Вызов без аргументов показывает справку и возвращает управление терминалу.
+The first time you run `safesay` in a terminal, with a phrase or with no arguments, it prompts you to choose a mode. Press Enter to choose foreground. Running it with no arguments in a terminal shows help and returns to the prompt.
 
-1. **Foreground.** Команда ждёт освобождения микрофона, озвучивает фразу и возвращает код выхода `say`.
-2. **Background.** Команда кладёт фразу в очередь на диске и сразу возвращает управление. Пользовательский LaunchAgent ждёт новых заданий в фоне.
+1. **Foreground.** The command waits for the microphone, speaks the phrase, and returns the exit status from `say`.
+2. **Background.** The command adds the phrase to an on-disk queue and returns immediately. A user LaunchAgent waits for new jobs in the background.
 
-Режим хранится в `~/.config/safesay/config.json`. Если терминала нет и режим ещё не задан, команда ждёт в текущем процессе. Выбор появится при первом вызове из терминала. Режим также можно установить явно.
+The selected mode is stored in `~/.config/safesay/config.json`. If no mode is set and no terminal is available, the command uses foreground mode for that run. You can also set the mode directly.
 
 ```sh
 safesay --mode foreground
@@ -31,9 +31,9 @@ safesay -v Alex 'Task complete'
 printf '%s\n' 'Task complete' | safesay
 ```
 
-Запись в файл (`-o`) и запросы списков, например `-v '?'`, выполняются сразу. Для ввода с клавиатуры используйте `safesay -f -`. Этот ввод, `--progress` и `--interactive` работают в текущем терминале. При переходе в foreground LaunchAgent дорабатывает очередь и отключается.
+File output (`-o`) and queries such as `-v '?'` run immediately. Use `safesay -f -` to type text in the terminal. Typed input, `--progress`, and `--interactive` run in the current terminal. When you switch to foreground mode, the LaunchAgent finishes its queue and stops.
 
-## Исключения для микрофона
+## Microphone exceptions
 
 ```sh
 safesay --mic-status
@@ -43,13 +43,13 @@ safesay --list-allowed
 safesay --clear-allowed
 ```
 
-`--allow-current` добавляет приложения с активным аудиовходом в момент вызова. `--mic-status` показывает их ID и состояние исключения. `--list-allowed` показывает весь сохранённый список, `--clear-allowed` очищает его. Список `allowedApps` можно править в JSON вручную.
+`--allow-current` adds all apps currently using audio input. `--mic-status` shows their IDs and whether each app is allowed. `--list-allowed` displays all saved exceptions, and `--clear-allowed` clears them. You can also edit `allowedApps` in the JSON file.
 
-Озвучка ждёт, пока Core Audio видит хотя бы один активный вход вне исключений. Если запись начинается во время фразы, `safesay` останавливает `say` после ближайшей проверки и позже повторяет фразу с начала. Кнопка Mute в звонке может оставить аудиовход активным. Исключение для браузера применяется ко всему приложению.
+Speech waits as long as Core Audio reports an active input from any app outside the exception list. If an app outside the list starts recording mid-phrase, `safesay` stops `say` at the next microphone check and repeats the phrase from the beginning when speech is allowed again. Muting a call may leave audio input active. A browser exception applies to the entire browser.
 
-[Настройка, диагностика и удаление](docs/configuration.md)
+[Configuration, troubleshooting, and uninstalling](docs/configuration.md)
 
-## Проверка
+## Tests
 
 ```sh
 swift test
