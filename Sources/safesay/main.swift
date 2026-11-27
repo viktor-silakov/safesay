@@ -15,6 +15,10 @@ private enum CLI {
         "-l": "--list-allowed",
         "-M": "--mic-status",
     ]
+    static let longOptions = Set(shortOptions.values).union([
+        "--allow-app", "--allow-current", "--clear-allowed", "--clear-queue",
+        "--remove-allowed", "--version",
+    ])
 }
 
 struct SafesayError: LocalizedError {
@@ -197,7 +201,10 @@ func run(_ rawArguments: [String], storage: Storage) throws -> Int32 {
     }
 
     let options = try speechOptions(arguments)
-    let speech = SpeechArguments(options.arguments)
+    let speech = SpeechArguments(options.arguments, commandOptions: CLI.longOptions)
+    if let option = speech.singleDashLongOption {
+        throw SafesayError("Invalid option '\(option)'. Use '-\(option)'.")
+    }
     if speech.silent { try execSay(speech.arguments) }
 
     var mode = try storage.configuration().mode

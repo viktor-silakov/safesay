@@ -77,6 +77,23 @@ final class SafesayTests: XCTestCase {
         XCTAssertEqual(expandedArguments(["--", "-p"]), ["--", "-p"])
     }
 
+    func testSingleDashLongOptionsFailBeforeReadingInput() throws {
+        let home = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: home) }
+        let storage = Storage(home: home)
+        for (arguments, option) in [(["-list-allowed"], "-list-allowed"),
+                                    (["-v", "Alex", "-resume"], "-resume"),
+                                    (["-ttl=5m"], "-ttl")] {
+            XCTAssertThrowsError(try safesay.run(arguments, storage: storage)) { error in
+                XCTAssertEqual(error.localizedDescription, "Invalid option '\(option)'. Use '-\(option)'.")
+            }
+        }
+        XCTAssertFalse(FileManager.default.fileExists(atPath: storage.configDirectory.path))
+        let options: Set<String> = ["--list-allowed"]
+        XCTAssertNil(SpeechArguments(["--", "-list-allowed"], commandOptions: options).singleDashLongOption)
+        XCTAssertNil(SpeechArguments(["-f", "-list-allowed"], commandOptions: options).singleDashLongOption)
+    }
+
     func testPausedPhraseExpiresBeforeItCanStart() throws {
         let speaker = Speaker(executable: "/does-not-exist", microphoneUsers: { [] }, configuration: {
             var config = Configuration()

@@ -17,11 +17,12 @@ struct SpeechArguments {
     private(set) var silent = false
     private(set) var attached = false
     private(set) var text: [String] = []
+    private(set) var singleDashLongOption: String?
     private var input: (path: String, index: Int, prefix: String)?
 
     var readsStdin: Bool { input.map { $0.path == "-" } ?? text.isEmpty }
 
-    init(_ arguments: [String]) {
+    init(_ arguments: [String], commandOptions: Set<String> = []) {
         self.arguments = arguments
         var index = 0
         while index < arguments.count {
@@ -54,6 +55,11 @@ struct SpeechArguments {
                     prefix = "--\(name)="
                 }
             } else {
+                let spelling = argument.prefix { $0 != "=" }
+                if commandOptions.contains("-" + spelling) {
+                    singleDashLongOption = String(spelling)
+                    break
+                }
                 guard let flag = argument.dropFirst().first, let name = Self.shortOptions[flag] else { continue }
                 option = name
                 let remainder = String(argument.dropFirst(2))
