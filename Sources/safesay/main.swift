@@ -17,6 +17,8 @@ func printUsage() {
                safesay --mode foreground|background
                safesay --allow-app <bundle-id-or-executable-path>
                safesay --allow-current
+               safesay --list-allowed
+               safesay --clear-allowed
                safesay --mic-status
 
         Use -f - to read text from the terminal. See `man say` for speech arguments.
@@ -71,6 +73,16 @@ func run(_ arguments: [String], storage: Storage) throws -> Int32 {
         }
         try storage.configure { $0.allowedApps.insert(arguments[1]) }
         print(arguments[1])
+        return 0
+    case "--list-allowed":
+        guard arguments.count == 1 else { throw SafesayError("Usage: safesay --list-allowed") }
+        let allowed = try storage.configuration().allowedApps.sorted()
+        print(allowed.isEmpty ? "No allowed applications." : allowed.joined(separator: "\n"))
+        return 0
+    case "--clear-allowed":
+        guard arguments.count == 1 else { throw SafesayError("Usage: safesay --clear-allowed") }
+        try storage.configure { $0.allowedApps.removeAll() }
+        print("Allowed applications cleared.")
         return 0
     case "--allow-current", "--mic-status":
         guard arguments.count == 1 else { throw SafesayError("Unexpected arguments.") }
