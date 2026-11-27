@@ -10,6 +10,19 @@ func report(_ message: String) {
     try? FileHandle.standardError.write(contentsOf: Data("safesay: \(message)\n".utf8))
 }
 
+func printUsage() {
+    print("""
+        Usage: safesay [say arguments]
+               safesay -f -
+               safesay --mode foreground|background
+               safesay --allow-app <bundle-id-or-executable-path>
+               safesay --allow-current
+               safesay --mic-status
+
+        Use -f - to read text from the terminal. See `man say` for speech arguments.
+        """)
+}
+
 func chooseMode() throws -> Mode? {
     let descriptor = open("/dev/tty", O_RDWR | O_NOCTTY)
     guard descriptor >= 0 else { return nil }
@@ -42,15 +55,7 @@ func run(_ arguments: [String], storage: Storage) throws -> Int32 {
 
     switch arguments.first {
     case "--help" where arguments.count == 1:
-        print("""
-            Usage: safesay [say arguments]
-                   safesay --mode foreground|background
-                   safesay --allow-app <bundle-id-or-executable-path>
-                   safesay --allow-current
-                   safesay --mic-status
-
-            See `man say` for speech arguments.
-            """)
+        printUsage()
         return 0
     case "--mode":
         guard arguments.count == 2, let mode = Mode(rawValue: arguments[1]) else {
@@ -106,9 +111,16 @@ func run(_ arguments: [String], storage: Storage) throws -> Int32 {
         }
     }
 
+    let terminalInput = isatty(STDIN_FILENO) == 1
+    if arguments.isEmpty && terminalInput {
+        if mode == .background { try agent.register() }
+        if let mode { print("Mode: \(mode.rawValue)\n") }
+        printUsage()
+        return 0
+    }
+
     forwardTerminationSignals()
-    let terminalInput = speech.readsStdin && isatty(STDIN_FILENO) == 1
-    if terminalInput {
+    if speech.readsStdin && terminalInput {
         while let line = readLine(strippingNewline: false) {
             let job = try speech.job(stdin: Data(line.utf8))
             let status = try speakInCommand(job, storage: storage, speaker: speaker)
